@@ -758,6 +758,10 @@ def load_generation_predictions_jsonl(
         if not question:
             raise ValueError(f"generation prediction record is missing question: {question_id}")
 
+        retrieved_docs_top5 = record.get("retrieved_docs_top5")
+        if not retrieved_docs_top5:
+            retrieved_docs_top5 = _top_unique_retrieved_docs(record.get("retrieved_contexts", []), top_k=5)
+
         result_rows.append(
             {
                 "id": question_id,
@@ -766,6 +770,7 @@ def load_generation_predictions_jsonl(
                 "answer": record.get("answer", ""),
                 "ground_truth_answer": record.get("ground_truth_answer", ""),
                 "ground_truth_docs": _jsonish_to_text(record.get("ground_truth_docs", "")),
+                "retrieved_docs_top5": _jsonish_to_text(retrieved_docs_top5),
                 "latency_ms": record.get("latency_ms", ""),
                 "retrieval_ms": record.get("retrieval_ms", ""),
                 "rerank_ms": record.get("rerank_ms", ""),
@@ -845,6 +850,33 @@ def load_generation_input_rows(
     else:
         context_rows = read_jsonl(contexts_path)
     return result_rows, context_rows
+
+
+def _top_unique_retrieved_docs(retrieved_contexts: Any, top_k: int = 5) -> list[str]:
+    if not isinstance(retrieved_contexts, list):
+        return []
+    sorted_contexts = sorted(
+        [context for context in retrieved_contexts if isinstance(context, dict)],
+        key=lambda context: _safe_float(context.get("rank"), 9999.0),
+    )
+    docs: list[str] = []
+    for context in sorted_contexts:
+        metadata = context.get("metadata") if isinstance(context.get("metadata"), dict) else {}
+        doc = (
+            context.get("source_file")
+            or context.get("filename")
+            or metadata.get("source_file")
+            or metadata.get("source_file_nfc")
+            or context.get("doc_id")
+            or metadata.get("doc_id")
+            or ""
+        )
+        doc_text = str(doc).strip()
+        if doc_text and doc_text not in docs:
+            docs.append(doc_text)
+        if len(docs) >= top_k:
+            break
+    return docs
 
 
 def _jsonish_to_text(value: Any) -> str:
@@ -4162,6 +4194,7 @@ def build_review_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "question_id": record.get("question_id", ""),
                 "question": record.get("question", ""),
                 "predicted_answer_type": record.get("answer_type", ""),
+                "retrieved_docs_top5": record.get("retrieved_docs_top5", ""),
                 "source_files": " | ".join(str(value) for value in record.get("source_files", [])),
                 "chunk_ids": " | ".join(str(value) for value in record.get("chunk_ids", [])),
                 "context_summary": truncate_text(
@@ -4205,6 +4238,7 @@ def build_llm_answer_review_rows(records: list[dict[str, Any]]) -> list[dict[str
                 "question": record.get("question", ""),
                 "ground_truth": record.get("ground_truth", ""),
                 "ground_truth_docs": record.get("ground_truth_docs", ""),
+                "retrieved_docs_top5": record.get("retrieved_docs_top5", ""),
                 "raw_llm_text": raw_text,
                 "parsed_answer": parsed_answer,
                 "final_answer": record.get("answer", ""),
@@ -4252,6 +4286,10 @@ def write_llm_answer_review_html(path: str | Path, rows: list[dict[str, Any]]) -
     <h2>GT</h2>
     <pre>{html.escape(str(row.get('ground_truth', '')))}</pre>
     <p class="docs">{html.escape(str(row.get('ground_truth_docs', '')))}</p>
+  </section>
+  <section>
+    <h2>Retrieved Docs Top5</h2>
+    <pre>{html.escape(str(row.get('retrieved_docs_top5', '')))}</pre>
   </section>
   <section class="grid">
     <div>
@@ -4338,6 +4376,7 @@ def build_ragas_eval_records(records: list[dict[str, Any]]) -> list[dict[str, An
                 "question_id": record.get("question_id", ""),
                 "answer_type": record.get("answer_type", ""),
                 "source_files": record.get("source_files", []),
+                "retrieved_docs_top5": record.get("retrieved_docs_top5", ""),
                 "chunk_ids": record.get("chunk_ids", []),
             }
         )
