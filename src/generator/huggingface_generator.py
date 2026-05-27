@@ -40,6 +40,7 @@ class HuggingFaceGenerator:
         self._tokenizer = None
         self._model = None
         self._device = None
+        self._processor_mode = False
 
     def generate(self, query: str, contexts: list[str] | str, system_prompt: str | None = None) -> str:
         prompt = self._coerce_prompt(query=query, contexts=contexts)
@@ -51,6 +52,9 @@ class HuggingFaceGenerator:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
+
+        if self._processor_mode:
+            return self._generate_with_processor(tokenizer, model, messages)
 
         if getattr(tokenizer, "chat_template", None):
             input_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -80,17 +84,60 @@ class HuggingFaceGenerator:
         generated_ids = output_ids[0][prompt_length:]
         return tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
+    def _generate_with_processor(self, processor, model, messages: list[dict[str, str]]) -> str:
+        inputs = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            add_generation_prompt=True,
+        )
+        inputs = {key: value.to(self._device) for key, value in inputs.items()}
+        do_sample = self.config.temperature > 0
+
+        eos_token_id = getattr(processor, "eos_token_id", None)
+        if eos_token_id is None and getattr(processor, "tokenizer", None) is not None:
+            eos_token_id = getattr(processor.tokenizer, "eos_token_id", None)
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": self.config.max_new_tokens,
+            "do_sample": do_sample,
+            "repetition_penalty": self.config.repetition_penalty,
+        }
+        if eos_token_id is not None:
+            generation_kwargs["pad_token_id"] = eos_token_id
+        if do_sample:
+            generation_kwargs["temperature"] = self.config.temperature
+            generation_kwargs["top_p"] = self.config.top_p
+
+        import torch
+
+        with torch.inference_mode():
+            output_ids = model.generate(**inputs, **generation_kwargs)
+
+        prompt_length = inputs["input_ids"].shape[-1]
+        generated_ids = output_ids[0][prompt_length:]
+        if hasattr(processor, "decode"):
+            return processor.decode(generated_ids, skip_special_tokens=True).strip()
+        if getattr(processor, "tokenizer", None) is not None:
+            return processor.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        return str(generated_ids).strip()
+
     def _load(self):
         if self._tokenizer is not None and self._model is not None:
             return self._tokenizer, self._model
 
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
         device = self.config.device or ("cuda" if torch.cuda.is_available() else "cpu")
         dtype = self._resolve_torch_dtype(device)
 
-        tokenizer = AutoTokenizer.from_pretrained(self.config.model_name, trust_remote_code=True)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(self.config.model_name, trust_remote_code=True)
+            self._processor_mode = False
+        except Exception:
+            tokenizer = AutoProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)
+            self._processor_mode = True
         model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
             torch_dtype=dtype,
