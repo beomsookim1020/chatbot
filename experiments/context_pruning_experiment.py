@@ -47,11 +47,7 @@ from src.generation.rfp_generation import (  # noqa: E402
 )
 
 
-DEFAULT_PREDICTIONS = (
-    "outputs/predictions/"
-    "96_dense_qdecomp_rrf_per75_docscore_mean3_targetaware30_max5_preserve3_"
-    "relaxed_filter_kure_chroma_690_canonical.jsonl"
-)
+DEFAULT_PREDICTIONS = "outputs/predictions/best_variant_predictions.jsonl"
 DEFAULT_EVAL_CSV = "data/eval/representative_wrong_30_eval_batch_format.csv"
 DEFAULT_CHUNKS = "indexes/chroma_kure_v1_soyeon_690_260520_chunks_v2_690/chunks.jsonl"
 DEFAULT_SOURCE_STORE = "data/source_store_v2_690.jsonl"
