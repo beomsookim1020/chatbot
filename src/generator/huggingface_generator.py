@@ -126,8 +126,12 @@ class HuggingFaceGenerator:
         if self._tokenizer is not None and self._model is not None:
             return self._tokenizer, self._model
 
+        import os
+
+        os.environ.setdefault("TRANSFORMERS_NO_TORCHVISION", "1")
+
         import torch
-        from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         device = self.config.device or ("cuda" if torch.cuda.is_available() else "cpu")
         dtype = self._resolve_torch_dtype(device)
@@ -136,6 +140,8 @@ class HuggingFaceGenerator:
             tokenizer = AutoTokenizer.from_pretrained(self.config.model_name, trust_remote_code=True)
             self._processor_mode = False
         except Exception:
+            from transformers import AutoProcessor
+
             tokenizer = AutoProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)
             self._processor_mode = True
         model = AutoModelForCausalLM.from_pretrained(
